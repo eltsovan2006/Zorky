@@ -1,0 +1,24 @@
+{
+  "description": "Registry of violation types: code (the event's type field), name, severity. The enum in events.schema.json and openapi.yaml must match it (tests/test_contract_types.py). default_on — the rule is enabled by default (ml/worker/rules.yaml, default section); zone_kind — the zone kind without which the rule finds nothing.",
+  "severities": ["low", "medium", "high", "critical"],
+  "types": [
+    {"code": "no_helmet", "name": "No helmet", "severity": "high", "default_on": true},
+    {"code": "no_respirator", "name": "No respirator", "severity": "medium", "default_on": true},
+    {"code": "danger_zone", "name": "Danger zone entry", "severity": "high", "zone_kind": "danger", "default_on": true},
+    {"code": "smoking", "name": "Smoking", "severity": "high", "default_on": true},
+    {"code": "fall", "name": "Person fell", "severity": "critical", "default_on": true},
+    {"code": "immobile", "name": "Person immobile", "severity": "critical", "default_on": true},
+    {"code": "vehicle_proximity", "name": "Too close to a vehicle", "severity": "critical", "default_on": false},
+    {"code": "running", "name": "Running on site", "severity": "low", "zone_kind": "machinery", "default_on": false},
+    {"code": "phone", "name": "Phone in a hazardous zone", "severity": "high", "zone_kind": "machinery", "default_on": false},
+    {"code": "fence_crossing", "name": "Fence crossing", "severity": "high", "zone_kind": "fence", "default_on": true},
+    {"code": "under_load", "name": "Under a load or conveyor", "severity": "high", "zone_kind": "under_load", "default_on": false},
+    {"code": "distress_signal", "name": "Distress signal", "severity": "high", "default_on": true},
+    {"code": "lone_worker", "name": "Lone worker", "severity": "high", "zone_kind": "two_person", "default_on": false},
+    {"code": "overcrowding", "name": "Too many people in a zone", "severity": "medium", "zone_kind": "crowd_limit", "default_on": false},
+    {"code": "at_height", "name": "At height — check the harness", "severity": "medium", "zone_kind": "height", "default_on": false},
+    {"code": "loitering", "name": "Loitering in a danger zone", "severity": "medium", "zone_kind": "danger", "default_on": false},
+    {"code": "vehicle_in_zone", "name": "Vehicle in a restricted zone", "severity": "high", "zone_kind": "danger", "default_on": false},
+    {"code": "vehicle_collision", "name": "Two vehicles on a collision course", "severity": "critical", "default_on": false}
+  ]
+}

@@ -1,0 +1,53 @@
+{
+  "linq_program": "ppe16",
+  "calibration_frames": 16,
+  "cpu_laptop": {
+    "note": "the live demo worker on the developer's laptop, onnxruntime CPU, model best.onnx; mean of 5 snapshots of /api/metrics 6 s apart, 24.10.2026",
+    "cameras": 4,
+    "total_fps": 2.43,
+    "inference_ms": 1739
+  },
+  "latency_live": {
+    "note": "H4, 25.10: clip mixkit-24127 --loop, backend without auth, ONNX PPE + people + pose; n=58-59 events per mode; the measurement ran with an unrelated process on the GPU (my forgotten demo run, 210% CPU), the GPU numbers are inflated; the frame timestamp is when the worker received the frame; a separate SSE client, rendering the card in the browser is not included",
+    "gpu_onnx_cuda": {
+      "frame_to_api_p50_ms": 43,
+      "frame_to_api_p95_ms": 118,
+      "frame_to_sse_p50_ms": 43,
+      "frame_to_sse_p95_ms": 120
+    },
+    "cpu": {
+      "frame_to_api_p50_ms": 92,
+      "frame_to_api_p95_ms": 140,
+      "frame_to_sse_p50_ms": 91,
+      "frame_to_sse_p95_ms": 140
+    },
+    "episode_start_to_first_event_s": {
+      "fall": {
+        "episodes": 80,
+        "found": 17,
+        "p50": 1.05,
+        "p95": 1.36
+      },
+      "danger_zone_synthetic": {
+        "episodes": 5,
+        "found": 5
+      },
+      "fence_crossing_synthetic": {
+        "episodes": 15,
+        "found": 9,
+        "p50": 0.47,
+        "p95": 4.11
+      },
+      "vehicle_proximity_synthetic": {
+        "episodes": 22,
+        "found": 14,
+        "p50": 0.42,
+        "p95": 3.63
+      },
+      "running_synthetic": {
+        "episodes": 17,
+        "found": 0
+      }
+    }
+  }
+}

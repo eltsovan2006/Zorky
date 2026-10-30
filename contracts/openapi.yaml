@@ -1,0 +1,1603 @@
+openapi: 3.0.3
+info:
+  title: Zorky backend API
+  version: 0.1.0
+  description: |
+    Backend contract: the single source of truth about the data between the worker, the backend and the web.
+    The event body (EventIn) must match contracts/events.schema.json — this is checked by
+    ml/tests/test_contracts.py. All coordinates (bbox, zone polygons) are normalized to 0..1 of the frame size.
+servers:
+  - url: http://localhost:8080
+
+security:
+  - sessionCookie: []
+
+paths:
+  /healthz:
+    get:
+      security: []
+      summary: The backend is alive
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    example: ok
+
+  /api/phone/{id}/frame:
+    post:
+      summary: A frame from a phone camera (the /phone-cam.html page or a camera in the browser) - admin, operator, specialist
+      description: |
+        The body is a JPEG. A camera with this id is registered automatically (“Phone camera” or the name from `?name=`), its source is the address
+        of the `/api/phone/{id}.mjpg` stream that the worker on the same machine reads.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: name
+          in: query
+          required: false
+          description: Camera name on auto-creation, up to 64 characters
+          schema:
+            type: string
+            maxLength: 64
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "204":
+          description: Frame accepted
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/phone/{id}.mjpg:
+    get:
+      summary: Raw phone frames as MJPEG - for the worker and signed-in people
+      description: The worker passes the token in `?token=` (cv2 can't send headers); a person uses the session cookie.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - name: token
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: A multipart/x-mixed-replace stream
+          content:
+            multipart/x-mixed-replace:
+              schema:
+                type: string
+                format: binary
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/demo/videos:
+    get:
+      summary: Demo videos - state (admin; outside demo mode enabled=false and empty lists)
+      responses:
+        "200":
+          description: Videos on this machine and what is looping now
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DemoState"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      summary: Upload your own video for the demo (admin, only MOSPROM_DEMO=1)
+      description: The body is the file as is (no multipart), the name is in `?name=`; extensions mp4, avi, mkv, mov, webm; up to 2 GB.
+      parameters:
+        - name: name
+          in: query
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/octet-stream:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: File saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DemoState"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "413":
+          description: The file is larger than 2 GB
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/demo/videos/{name}:
+    delete:
+      summary: Delete an uploaded demo video (admin)
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/demo/play:
+    post:
+      summary: Loop a video as a camera (admin, demo)
+      description: A camera with this id is registered automatically (the name comes from the file name); frames go to the camera preview.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [camera_id, video]
+              properties:
+                camera_id:
+                  type: string
+                video:
+                  type: string
+                name:
+                  type: string
+                  description: Camera name if it doesn't exist yet (up to 64 characters)
+                detect:
+                  type: boolean
+                  description: true - the camera source = the file for the worker with the model (without the frame looper)
+      responses:
+        "202":
+          description: Started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DemoState"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/demo/stop:
+    post:
+      summary: Stop a camera's looping video (admin, demo)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [camera_id]
+              properties:
+                camera_id:
+                  type: string
+      responses:
+        "200":
+          description: Stopped
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DemoState"
+
+  /api/linq:
+    get:
+      summary: LinQ connection state - for the “LinQ” section of the dashboard
+      description: |
+        Rights - admin, manager. Status (whether the bench broker responds), the report of the last bench
+        check (.tpu programs, modules, readiness), the selected device and the tail of the connection log
+        without sensitive lines. Credentials (VPN, Jupyter) are neither accepted nor returned through the API.
+      responses:
+        "200":
+          description: State
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinqStatus"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/linq/connect:
+    post:
+      summary: Connect to LinQ (starts the linq-up task on the backend machine)
+      description: Rights - admin. 409 if the scheduler task is not set up (scripts/linq-auto-setup.bat).
+      responses:
+        "202":
+          description: Started; progress - in GET /api/linq (busy, log)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinqStatus"
+        "409":
+          description: The start task is not set up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/linq/disconnect:
+    post:
+      summary: Disconnect from LinQ (stops the OpenVPN brought up by linq-up)
+      description: Rights - admin.
+      responses:
+        "202":
+          description: Started
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinqStatus"
+        "409":
+          description: The stop task is not set up
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/linq/config:
+    put:
+      summary: Choose the inference device (cpu, gpu, linq)
+      description: |
+        Rights - admin. The choice is remembered on the backend machine; workers take it on start
+        (`tasks.py run`). In demo mode linq is selected by default.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [device]
+              properties:
+                device:
+                  type: string
+                  enum: [cpu, gpu, linq]
+      responses:
+        "200":
+          description: State with the new device
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LinqStatus"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/auth/demo:
+    get:
+      summary: Roles for one-click sign-in (demo mode only, MOSPROM_DEMO=1)
+      description: Outside demo mode - an empty list. No session.
+      security: []
+      responses:
+        "200":
+          description: Demo users without passwords
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Me"
+    post:
+      summary: Sign in as a demo user without a password (demo mode only)
+      description: |
+        Works only with MOSPROM_DEMO=1 and only for users created by the demo.
+        Success - a session cookie, as with /api/auth/login. Otherwise 404.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [login]
+              properties:
+                login:
+                  type: string
+      responses:
+        "200":
+          description: Signed in; Set-Cookie with the session
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "404":
+          description: Demo mode is off or there is no such demo user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/login:
+    post:
+      summary: Sign-in of an operator, foreman, safety officer, manager, auditor or administrator
+      description: |
+        Success — the `session` session cookie (HttpOnly, SameSite=Strict, Secure behind https).
+        On password brute-forcing — 429 with a Retry-After header.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [login, password]
+              properties:
+                login:
+                  type: string
+                password:
+                  type: string
+                  format: password
+      responses:
+        "200":
+          description: Signed in; Set-Cookie with the session
+          headers:
+            Set-Cookie:
+              schema:
+                type: string
+                example: session=abc123; HttpOnly; SameSite=Strict; Path=/
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          description: Wrong login or password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Too many sign-in attempts, retry later
+          headers:
+            Retry-After:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/auth/logout:
+    post:
+      summary: Sign-out, the session is reset
+      responses:
+        "204":
+          description: Signed out; the cookie is cleared
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/auth/me:
+    get:
+      summary: Who is signed in now
+      responses:
+        "200":
+          description: The current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Me"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/auth/password:
+    post:
+      summary: Change your own password (all signed-in users, including with must_change_password)
+      description: The new password is at least 10 characters and not equal to the old one; after the change must_change_password=false.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordChange"
+      responses:
+        "204":
+          description: Password changed
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          description: Wrong old_password
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/users:
+    get:
+      summary: User list (admin only)
+      description: Rights - admin only; other roles get 403. No passwords or hashes.
+      responses:
+        "200":
+          description: Users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    post:
+      summary: Create a user (admin only)
+      description: Rights - admin only; other roles get 403. Created with must_change_password=true.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserCreate"
+      responses:
+        "201":
+          description: Created; temp_password is shown once
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserWithTempPassword"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: This login already exists
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/users/{login}:
+    patch:
+      summary: Change the name, role, active (admin only)
+      description: |
+        Rights - admin only; other roles get 403.
+        The last active admin can't be disabled or demoted - 409.
+      parameters:
+        - name: login
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserPatch"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "409":
+          description: This is the last active admin - it can't be disabled or demoted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/users/{login}/reset-password:
+    post:
+      summary: Reset the password (admin only)
+      description: Rights - admin only; other roles get 403. Without a body - generates a temporary password; with password - sets it.
+      parameters:
+        - name: login
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PasswordReset"
+      responses:
+        "200":
+          description: A new temp_password, shown once
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TempPassword"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/events:
+    get:
+      summary: Violation journal, newest first
+      parameters:
+        - name: type
+          in: query
+          schema:
+            $ref: "#/components/schemas/ViolationType"
+        - name: camera
+          in: query
+          schema:
+            type: string
+        - name: zone
+          in: query
+          schema:
+            type: string
+        - name: status
+          in: query
+          schema:
+            $ref: "#/components/schemas/EventStatus"
+        - name: from
+          in: query
+          description: ts not earlier than (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          description: ts not later than (ISO 8601)
+          schema:
+            type: string
+            format: date-time
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+      responses:
+        "200":
+          description: Events (a page); the total count under the filter — in the X-Total-Count header
+          headers:
+            X-Total-Count:
+              schema:
+                type: integer
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Event"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      summary: A new violation (from the ML worker)
+      security:
+        - workerToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EventIn"
+      responses:
+        "201":
+          description: Accepted, broadcast to the live feed and notifications
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/events/{id}:
+    patch:
+      summary: Labeling by an operator or foreman — confirmed, false, sent to the foreman, resolved
+      description: Rights - operator and master only; manager, specialist, auditor and admin get 403.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              required: [status]
+              properties:
+                status:
+                  $ref: "#/components/schemas/EventStatus"
+                by:
+                  type: string
+                  description: "Ignored: who — from the session (the user's login); it is what goes into status_history"
+                reason:
+                  $ref: "#/components/schemas/FalseReason"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Event"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/stream:
+    get:
+      summary: Live violation feed (Server-Sent Events)
+      description: |
+        A text/event-stream stream. Each new violation is an `event: violation` message
+        with `data: <Event in JSON>`. Every 15 seconds — a `: ping` comment.
+        A repeat within the merge window and a status change (operator, foreman) — `event: update` with the same `Event`:
+        the `count` counter and `status` are updated without reloading the page.
+        Other messages: `event: master` (`data: <Event>` — the incident was handed to the foreman) and
+        `event: escalation` (`data: <Event>` — the foreman did not respond in the allotted time).
+        Handover to the foreman by area: `event: master` is received by operators and those masters whose
+        `areas` contain the `Camera.area` of the incident's camera. A master without `areas` (no field or empty)
+        receives everything - backward compatibility; for a camera without `area` the incident goes to all foremen.
+        If no matching foreman is online, `master` goes to all online foremen, and
+        operators get `event: escalation` with the field `note: "no foreman for the area"`.
+        A session (cookie) is required.
+        In the browser: `new EventSource("/api/stream")`, reconnection is automatic.
+      responses:
+        "200":
+          description: Event stream
+          content:
+            text/event-stream:
+              schema:
+                type: string
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/cameras:
+    get:
+      summary: Camera list
+      description: |
+        Rights - any role; the worker takes its cameras with the same request (Bearer token).
+        The `source` field is returned only to admin and the worker (by token); other roles get it without the field.
+      security:
+        - sessionCookie: []
+        - workerToken: []
+      responses:
+        "200":
+          description: Cameras
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Camera"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    post:
+      summary: Add or update a camera (by id)
+      description: |
+        Rights - admin and specialist; other roles get 403. A safety officer creates a new camera
+        (e.g. when setting up a new area), but doesn't overwrite an existing one - 403.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Camera"
+      responses:
+        "201":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Camera"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/cameras/{id}:
+    patch:
+      summary: Move a camera to an area, rename it, set its rules (admin and specialist)
+      description: |
+        Changes only the sent fields; doesn't touch the source address. `area: null` or an empty string removes
+        the camera from the area; `rules: null` restores the area rules. An area that doesn't exist is created automatically.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                name:
+                  type: string
+                area:
+                  type: [string, "null"]
+                rules:
+                  type: [array, "null"]
+                  items:
+                    type: string
+                rule_schedule:
+                  type: [object, "null"]
+                  description: |
+                    When each rule is active (local time): type code -> {start, end} “HH:MM”,
+                    start > end - across midnight. Rules without an entry are always active.
+                  additionalProperties:
+                    $ref: "#/components/schemas/Schedule"
+      responses:
+        "200":
+          description: The camera after the change
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Camera"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+    delete:
+      summary: Delete a camera (admin only; other roles - 403)
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/cameras/{id}/rules:
+    get:
+      summary: Which violations the camera monitors (the worker re-reads every few seconds)
+      description: |
+        The camera's own rules, otherwise the rules of its area, otherwise `enabled: null` - the default set
+        from `ml/worker/rules.yaml`. An empty list - monitor nothing.
+      security:
+        - sessionCookie: []
+        - workerToken: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Camera rules
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [enabled, source]
+                properties:
+                  enabled:
+                    type: [array, "null"]
+                    items:
+                      type: string
+                  source:
+                    type: string
+                    enum: [camera, area, default]
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/areas:
+    get:
+      summary: Areas with cameras and shared rules
+      description: Rights - any role (and the worker). Areas known only from cameras are listed too.
+      security:
+        - sessionCookie: []
+        - workerToken: []
+      responses:
+        "200":
+          description: Areas
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Area"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/areas/{name}:
+    put:
+      summary: Create an area or change its rules (admin and specialist)
+      description: "`rules: null` or no field - the default set; a list of codes from the registry - monitor only them."
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: false
+              properties:
+                rules:
+                  type: [array, "null"]
+                  items:
+                    type: string
+                rule_schedule:
+                  type: [object, "null"]
+                  description: |
+                    When each rule is active (local time): type code -> {start, end} “HH:MM”,
+                    start > end - across midnight. Rules without an entry are always active.
+                  additionalProperties:
+                    $ref: "#/components/schemas/Schedule"
+      responses:
+        "200":
+          description: Area
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Area"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+    delete:
+      summary: Delete an area without cameras (admin and specialist)
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: Deleted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+        "409":
+          description: The area has cameras
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /api/cameras/{id}/zones:
+    get:
+      summary: Camera zones (the worker re-reads them every few seconds)
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Zones
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Zone"
+    put:
+      summary: Replace all camera zones (the zone editor; specialist only; the worker reads GET with a token)
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                $ref: "#/components/schemas/Zone"
+      responses:
+        "200":
+          description: Saved
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Zone"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "403":
+          $ref: "#/components/responses/Forbidden"
+
+  /api/cameras/{id}/frame:
+    post:
+      summary: A preview frame from the worker, ~5 frames/s
+      description: The backend keeps the camera's last frame and serves it via /mjpeg without decoding.
+      security:
+        - workerToken: []
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "204":
+          description: Accepted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/cameras/{id}/mjpeg:
+    get:
+      summary: Live camera preview for <img src>
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: A multipart/x-mixed-replace stream of JPEG frames
+          content:
+            multipart/x-mixed-replace:
+              schema:
+                type: string
+                format: binary
+
+  /api/snapshots:
+    post:
+      summary: Upload a violation snapshot
+      security:
+        - workerToken: []
+      requestBody:
+        required: true
+        content:
+          image/jpeg:
+            schema:
+              type: string
+              format: binary
+      responses:
+        "201":
+          description: Saved; put the url into the event's snapshot_url
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [url]
+                properties:
+                  url:
+                    type: string
+                    example: /api/snapshots/evt-000001.jpg
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /api/snapshots/{name}:
+    get:
+      summary: Violation snapshot
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: JPEG
+          content:
+            image/jpeg:
+              schema:
+                type: string
+                format: binary
+        "404":
+          $ref: "#/components/responses/NotFound"
+
+  /api/metrics:
+    post:
+      summary: Inference metrics from the worker every few seconds
+      security:
+        - workerToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Metrics"
+      responses:
+        "204":
+          description: Accepted
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+    get:
+      description: Rights - manager, admin (and dev mode); other roles read the journal, not the metrics.
+      summary: The latest metrics for each camera — for the LinQ widget on the dashboard
+      responses:
+        "200":
+          description: Metrics
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Metrics"
+
+components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session
+      description: The session after POST /api/auth/login (HttpOnly, SameSite=Strict). Reading and people's actions.
+    workerToken:
+      type: http
+      scheme: bearer
+      description: "ML worker token: Authorization: Bearer <WORKER_TOKEN>. Only POST /api/events, /frame, /snapshots, /metrics."
+
+  responses:
+    Unauthorized:
+      description: No session or token, or they are invalid
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    Forbidden:
+      description: The role does not allow this action, or with must_change_password - “change your password”
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    BadRequest:
+      description: The body doesn't match the contract
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+    NotFound:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+
+  schemas:
+    Role:
+      type: string
+      description: |
+        operator and master — event labeling (PATCH); specialist — zones (PUT);
+        manager — read-only analytics;
+        auditor (the safety department and lawyers) — read-only journal, CSV, history and analytics;
+        admin (IT) — cameras (POST, DELETE), metrics, read-only everything else.
+        Rights per path — in the description of each path; without the right — 403.
+      enum: [operator, master, specialist, manager, auditor, admin]
+    DemoState:
+      type: object
+      required: [enabled, videos, players, folder]
+      properties:
+        enabled:
+          type: boolean
+        folder:
+          type: string
+          description: The folder with uploaded videos on the backend machine
+        videos:
+          type: array
+          items:
+            type: object
+            required: [name, mb]
+            properties:
+              name:
+                type: string
+              mb:
+                type: number
+        players:
+          type: array
+          items:
+            type: object
+            required: [camera_id, video]
+            properties:
+              camera_id:
+                type: string
+              video:
+                type: string
+
+    LinqStatus:
+      type: object
+      required: [state, busy, host, device, devices, ready, log]
+      properties:
+        state:
+          type: string
+          enum: [connected, disconnected]
+          description: Whether the bench's RabbitMQ broker responds
+        busy:
+          type: boolean
+          description: Connecting or disconnecting is in progress
+        host:
+          type: string
+        device:
+          type: string
+          enum: [cpu, gpu, linq]
+        devices:
+          type: array
+          items:
+            type: string
+        ready:
+          type: boolean
+          description: The bench is available and ready according to the report (broker, modules, there are .tpu programs)
+        report:
+          type: object
+          nullable: true
+          description: The last bench report (programs, modules, check time)
+          additionalProperties: true
+        bench:
+          type: object
+          nullable: true
+          description: |
+            Measurements of our program on the accelerator from the repository (docs/measured.json and
+            ml/export/linq_results): latency, frames/s at 1/2/4 requests in flight, the best threshold
+            by F1 against ONNX FP32, a repeated measurement under the bench's load (`loaded`). null - no measurements.
+          additionalProperties: true
+        log:
+          type: array
+          items:
+            type: string
+
+    Me:
+      type: object
+      required: [login, name, role]
+      properties:
+        login:
+          type: string
+        name:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        must_change_password:
+          type: boolean
+          description: |
+            true - the password is temporary. Until it is changed, only POST /api/auth/password,
+            GET /api/auth/me and POST /api/auth/logout are available; everything else - 403 “change your password”.
+        areas:
+          type: array
+          items:
+            type: string
+          description: The user's areas (for master); no field or empty - the foreman sees all areas
+    User:
+      type: object
+      description: User; no passwords or hashes
+      required: [login, name, role, active, created_at, created_by]
+      properties:
+        login:
+          type: string
+        name:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        created_by:
+          type: string
+        areas:
+          type: array
+          items:
+            type: string
+          description: The user's areas (for master); no field or empty - the foreman sees all areas
+    UserCreate:
+      type: object
+      additionalProperties: false
+      required: [login, name, role]
+      properties:
+        login:
+          type: string
+        name:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        areas:
+          type: array
+          items:
+            type: string
+          description: The user's areas (for master); no field or empty - the foreman sees all areas
+        password:
+          type: string
+          minLength: 10
+          description: The password set by admin; absent - a temporary one is generated and returned in temp_password
+        must_change_password:
+          type: boolean
+          default: true
+          description: Require a password change on first sign-in (only applies with password)
+    PasswordReset:
+      type: object
+      additionalProperties: false
+      properties:
+        password:
+          type: string
+          minLength: 10
+          description: A new password from admin; absent - a temporary one is generated
+        must_change_password:
+          type: boolean
+          default: true
+    UserPatch:
+      type: object
+      additionalProperties: false
+      minProperties: 1
+      properties:
+        name:
+          type: string
+        role:
+          $ref: "#/components/schemas/Role"
+        active:
+          type: boolean
+        areas:
+          type: array
+          items:
+            type: string
+          description: The user's areas (for master); an empty list removes the restriction - the foreman sees all areas
+    UserWithTempPassword:
+      type: object
+      required: [user, temp_password]
+      properties:
+        user:
+          $ref: "#/components/schemas/User"
+        temp_password:
+          type: [string, "null"]
+          description: The generated password, shown once; null if admin set the password
+    TempPassword:
+      type: object
+      required: [temp_password]
+      properties:
+        temp_password:
+          type: [string, "null"]
+          description: The generated password, shown once; null if admin set the password
+    PasswordChange:
+      type: object
+      additionalProperties: false
+      required: [old_password, new_password]
+      properties:
+        old_password:
+          type: string
+          format: password
+        new_password:
+          type: string
+          format: password
+          minLength: 10
+    ViolationType:
+      type: string
+      description: Code from contracts/violation_types.json. at_height - monitoring a person's presence in a kind=height zone (check the safety harness), not detecting a missing harness tie-off
+      enum: [no_helmet, no_respirator, danger_zone, smoking, fall, immobile, vehicle_proximity, running, phone, fence_crossing, under_load, distress_signal, lone_worker, overcrowding, at_height, loitering, vehicle_in_zone, vehicle_collision]
+
+    EventStatus:
+      type: string
+      enum: [new, confirmed, sent_to_master, resolved, "false"]
+
+    Severity:
+      type: string
+      enum: [low, medium, high, critical]
+
+    FalseReason:
+      type: string
+      description: The reason for “false”; optional, allowed only with status `false` (otherwise 400)
+      enum: [not_person, ppe_present, wrong_zone, duplicate, other]
+
+    StatusChange:
+      type: object
+      required: [status, ts, by]
+      properties:
+        status:
+          $ref: "#/components/schemas/EventStatus"
+        ts:
+          type: string
+          format: date-time
+        by:
+          type: string
+          description: Who changed the status (operator or system)
+        reason:
+          $ref: "#/components/schemas/FalseReason"
+
+    BBox:
+      type: array
+      description: "[x1, y1, x2, y2], normalized 0..1; x1 < x2, y1 < y2"
+      items:
+        type: number
+        minimum: 0
+        maximum: 1
+      minItems: 4
+      maxItems: 4
+
+    Point:
+      type: array
+      description: "[x, y], normalized 0..1"
+      items:
+        type: number
+        minimum: 0
+        maximum: 1
+      minItems: 2
+      maxItems: 2
+
+    EventIn:
+      description: Same as contracts/events.schema.json
+      type: object
+      additionalProperties: false
+      required: [camera_id, ts, frame_id, type, bbox, confidence]
+      properties:
+        camera_id:
+          type: string
+          minLength: 1
+        ts:
+          type: string
+          format: date-time
+        frame_id:
+          type: integer
+          minimum: 0
+        type:
+          $ref: "#/components/schemas/ViolationType"
+        bbox:
+          $ref: "#/components/schemas/BBox"
+        confidence:
+          type: number
+          minimum: 0
+          maximum: 1
+        track_id:
+          type: integer
+          minimum: 0
+        snapshot_url:
+          type: string
+        zone_id:
+          type: string
+        severity:
+          $ref: "#/components/schemas/Severity"
+        incident_id:
+          type: string
+        count:
+          type: integer
+          minimum: 1
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+
+    Event:
+      description: EventIn + the fields set by the backend
+      type: object
+      required: [id, camera_id, ts, frame_id, type, bbox, confidence, severity, incident_id, count, first_seen, last_seen, status, status_history, received_at]
+      properties:
+        id:
+          type: string
+          example: evt-000001
+        camera_id:
+          type: string
+        ts:
+          type: string
+          format: date-time
+        frame_id:
+          type: integer
+        type:
+          $ref: "#/components/schemas/ViolationType"
+        bbox:
+          $ref: "#/components/schemas/BBox"
+        confidence:
+          type: number
+        track_id:
+          type: integer
+        snapshot_url:
+          type: string
+        zone_id:
+          type: string
+        severity:
+          $ref: "#/components/schemas/Severity"
+        incident_id:
+          type: string
+        count:
+          type: integer
+          minimum: 1
+        first_seen:
+          type: string
+          format: date-time
+        last_seen:
+          type: string
+          format: date-time
+        status:
+          $ref: "#/components/schemas/EventStatus"
+        status_history:
+          type: array
+          items:
+            $ref: "#/components/schemas/StatusChange"
+        received_at:
+          type: string
+          format: date-time
+
+    Camera:
+      type: object
+      required: [id, name]
+      properties:
+        id:
+          type: string
+          example: cam-1
+        name:
+          type: string
+          example: Shop 1 — press
+        source:
+          type: string
+          description: RTSP address, path to a clip or webcam index (0, 1…) for the worker; returned only to admin and the worker, others get it without the field
+        area:
+          type: string
+          maxLength: 64
+          description: The camera's area (optional); by it the incident is handed to the area's foremen
+        rules:
+          type: array
+          items:
+            type: string
+          description: Which violations to monitor on this camera; no field - as in the area, and if absent there - the defaults
+        rule_schedule:
+          type: [object, "null"]
+          description: |
+            When each rule is active (local time): type code -> {start, end} “HH:MM”,
+            start > end - across midnight. Rules without an entry are always active.
+          additionalProperties:
+            $ref: "#/components/schemas/Schedule"
+
+    Area:
+      type: object
+      required: [name, cameras]
+      properties:
+        name:
+          type: string
+        rules:
+          type: array
+          items:
+            type: string
+          description: Shared rules for the area's cameras; no field - the defaults
+        rule_schedule:
+          type: [object, "null"]
+          description: |
+            When each rule is active (local time): type code -> {start, end} “HH:MM”,
+            start > end - across midnight. Rules without an entry are always active.
+          additionalProperties:
+            $ref: "#/components/schemas/Schedule"
+        cameras:
+          type: array
+          items:
+            type: string
+          description: Ids of the area's cameras (response only)
+
+    Schedule:
+      type: object
+      additionalProperties: false
+      required: [start, end]
+      description: Active window (local site time); start > end - across midnight
+      properties:
+        start:
+          type: string
+          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+          example: "08:00"
+        end:
+          type: string
+          pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+          example: "17:00"
+
+    Zone:
+      type: object
+      required: [id, kind, polygon]
+      properties:
+        id:
+          type: string
+          example: z-1
+        kind:
+          type: string
+          enum: [machinery, fence, height, other, danger, flammable, under_load, two_person, crowd_limit]
+          description: machinery — vehicles; fence — a fence; height — height; other — other; danger and flammable — as before (no entry / flammables, no smoking); under_load — under a conveyor or a suspended load; two_person — two-person work only (one person - lone_worker); crowd_limit — a limit on the number of people (exceeding it - overcrowding). Thresholds (how many people, how many seconds) - in ml/worker/rules.yaml, not in the zone
+        name:
+          type: string
+        polygon:
+          type: array
+          minItems: 3
+          items:
+            $ref: "#/components/schemas/Point"
+        schedule:
+          type: object
+          additionalProperties: false
+          required: [start, end]
+          description: When the zone is active (local site time); start > end - across midnight; no field - always
+          properties:
+            start:
+              type: string
+              pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+              example: "07:55"
+            end:
+              type: string
+              pattern: "^([01][0-9]|2[0-3]):[0-5][0-9]$"
+              example: "12:00"
+
+    Metrics:
+      type: object
+      required: [camera_id, device, fps, inference_ms, ts]
+      properties:
+        camera_id:
+          type: string
+        device:
+          type: string
+          enum: [linq, cpu, gpu]
+        fps:
+          type: number
+          description: Frames per second at the rules' input
+        inference_ms:
+          type: number
+          description: Inference time of one frame
+        e2e_ms:
+          type: number
+          description: The “frame → event in the backend” latency
+        ts:
+          type: string
+          format: date-time
+
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: string
