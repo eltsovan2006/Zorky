@@ -3,7 +3,8 @@
 # Zorky
 
 **Video monitoring for industrial safety.**<br>
-The camera sees a violation — the person in charge gets a card with the frame within seconds. One violation — one alert.
+The camera sees a violation — the person in charge gets a card with the frame within seconds. One violation — one alert.<br>
+<sub>Built by team Surgut at the Otkroy Mosprom hackathon (LinQ case).</sub>
 
 <img src="docs/img/pipeline-badges.svg" alt="0.929 mAP50 · 43 ms frame → event · 238 FPS on RTX 5070 · 12 FPS on LinQ" width="880">
 
@@ -17,7 +18,7 @@ The camera sees a violation — the person in charge gets a card with the frame 
 
 ## What it is
 
-Zorky analyzes video streams from cameras and detects dangerous behavior: a person without a helmet or respirator, smoking, falls, entering a restricted zone. The neural network runs on the Russian-made **LinQ** accelerator, on a GPU or on a CPU. Video and the journal stay inside the company's network perimeter — no cloud services.
+Zorky analyzes video streams from cameras and detects dangerous behavior: a person without a helmet or respirator, smoking, falls, entering a restricted zone. The neural network runs on the **LinQ** AI accelerator, on a GPU or on a CPU. Video and the event log stay inside the company's network perimeter — no cloud services.
 
 |  |  |
 |---|---|
@@ -25,7 +26,7 @@ Zorky analyzes video streams from cameras and detects dangerous behavior: a pers
 | **Critical events go out automatically** | Falls and immobility go to the foreman without the operator. Escalation if the foreman doesn't respond. |
 | **The foreman's pocket app** | A card with the frame on the phone, a response timer, “Got it, on my way”. No app store needed. |
 | **Zones on the frame** | A polygon is drawn by clicking right on the picture; rules are set per area, camera and schedule. |
-| **Evidence** | A journal with filters, CSV export and a PDF violation report. |
+| **Evidence** | An event log with filters, CSV export and a PDF violation report. |
 | **Analytics** | Hours, shifts, cameras, zones, response time and a heat map on the frame. |
 
 <br>
@@ -40,7 +41,7 @@ The **foreman** opens the `/master` page on a phone: a red banner for a critical
 
 <p align="center"><img src="docs/img/03-master-phone.png" alt="Foreman screen on a phone" width="300"></p>
 
-The **safety officer** configures area and camera rules, schedules and zones without programmers. The **manager and auditor** get read-only access to the journal and analytics. The **administrator** manages users, cameras and the inference device.
+The **safety officer** configures area and camera rules, schedules and zones without programmers. The **manager and auditor** get read-only access to the event log and analytics. The **administrator** manages users, cameras and the inference device.
 
 <p align="center"><img src="docs/img/05-analytics.png" alt="Analytics: hours, cameras, zones, shifts" width="880"></p>
 
@@ -69,7 +70,7 @@ Backend layers: `domain` → `application` → `infrastructure` → `api`. Depen
 Project components (the code itself is not published in this repository):
 
 ```
-backend/     API, repeat merging, journal, roles (FastAPI, SQLite)
+backend/     API, repeat merging, event log, roles (FastAPI, SQLite)
 ml/          worker: detectors, tracking, rules; training and evaluation
 web/         operator, foreman and manager interface (React, PWA)
 linq/        connection to and measurements on the LinQ accelerator
